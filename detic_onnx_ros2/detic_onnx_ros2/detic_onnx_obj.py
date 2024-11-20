@@ -16,6 +16,7 @@ from detic_onnx_ros2_msg.msg import (
     Segmentation,
     Polygon,
     PointOnImage,
+    BoundingBoxRgbd,
 )
 
 from cv_bridge import CvBridge
@@ -27,18 +28,6 @@ import copy
 import time
 
 from realsense2_camera_msgs.msg import RGBD
-
-import torch
-import clip
-
-from PIL import Image as PILImage
-
-from tf2_ros import TransformBroadcaster
-from geometry_msgs.msg import TransformStamped
-import pyrealsense2 as rs
-
-
-
 
 
 class DeticNode(Node):
@@ -65,6 +54,9 @@ class DeticNode(Node):
         self.segmentation_publisher = self.create_publisher(
             SegmentationInfo, self.get_name() + "/detic_result/segmentation_info", 10
         )
+        self.segmentation_rgbd_publisher = self.create_publisher(
+            BoundingBoxRgbd, self.get_name() + "/detic_result/bounding_box_rgbd", 10
+        )
         self.subscription = self.create_subscription(
             RGBD,
             "/camera/rgbd",
@@ -72,18 +64,6 @@ class DeticNode(Node):
             10,
         )
         self.bridge = CvBridge()
-
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model, self.prepro = clip.load("ViT-B/32", device=self.device)
-
-        #TF publisher
-        self.broadcaster = TransformBroadcaster(self)
-        self.TFpublisher = self.create_publisher(
-            TransformStamped,
-            '/object_pose',
-            10)
-        
-        
 
     def download_onnx(
         self,
@@ -158,7 +138,6 @@ class DeticNode(Node):
             color = assigned_colors[i]
             color = (int(color[0]), int(color[1]), int(color[2]))
             image_b = image.copy()
-            image_f = image.copy()
 
             # draw box
             x0, y0, x1, y1 = boxes[i]
@@ -175,6 +154,10 @@ class DeticNode(Node):
             segmentation.bounding_box.xmax = int(max(x0, x1))
             segmentation.bounding_box.ymin = int(min(y0, y1))
             segmentation.bounding_box.ymax = int(max(y0, y1))
+
+            bounding_box = [x0, y0, x1, y1]
+
+            object_xy = [(x0 + x1) // 2,(y0 + y1) // 2]
 
             # draw segment
             polygons = self.mask_to_polygons(masks[i])
@@ -235,53 +218,7 @@ class DeticNode(Node):
                 lineType=cv2.LINE_AA,
             )
 
-            img_clip = image_f[y0 : y1, x0 : x1]
-            clip_image = self.prepro(PILImage.fromarray(img_clip)).unsqueeze(0).to(self.device)
-            clip_text = clip.tokenize([ "candy box", "living room table","bed"]).to(self.device)
-
-            with torch.no_grad():
-                # 画像とテキストのエンコード
-                image_features = self.model.encode_image(clip_image)
-                text_features = self.model.encode_text(clip_text)
-
-                # 推論
-                logits_per_image, logits_per_text = self.model(clip_image, clip_text)
-                probs = logits_per_image.softmax(dim=-1).cpu().numpy()
-
-            # 類似率の出力
-            self.get_logger().info(f"{text}Label probs:{probs}")
-            
-            cx,cy = (x0+x1)/2,(y0+y1)/2
-            distance = self.depth_image[int(cy)][int(cx)]
-
-            px, py, fx, fy = self.k[2], self.k[5], self.k[0], self.k[4]
-            nearest_object_x = distance/1000 * (cx - px) / fx
-            nearest_object_y = distance/1000 * (cy - py) / fy
-            nearest_object_z = distance/1000
-            #print(text + "_"+str(probs[0][0])+ "_"+str(probs[0][1]))
-            """
-            cx,cy = (x0+x1)/2,(y0+y1)/2
-            distance = self.depth_image[int(cy)][int(cx)]
-            nearest_object_y,nearest_object_z,nearest_object_x = rs.rs2_deproject_pixel_to_point(self.depth_intrinsics, [cx, cy], distance)
-            """
-            now = self.get_clock().now().to_msg()
-            Trans = TransformStamped()
-            Trans.header.stamp = now
-            Trans.header.frame_id = "odom"
-            Trans.child_frame_id = text 
-            
-            Trans.transform.translation.x = float(nearest_object_z)
-            Trans.transform.translation.y = float(-nearest_object_x)
-            Trans.transform.translation.z = float(-nearest_object_y)
-            Trans.transform.rotation.x = 0.0
-            Trans.transform.rotation.y = 0.0
-            Trans.transform.rotation.z = 0.0
-            Trans.transform.rotation.w = 1.0
-            self.TFpublisher.publish(Trans)
-            self.broadcaster.sendTransform(Trans)
-
-
-        return image, segmentations
+        return image, segmentations, text, bounding_box, object_xy
 
     def mask_to_polygons(self, mask: np.ndarray) -> List[Any]:
         # cv2.RETR_CCOMP flag retrieves all the contours and arranges them to a 2-level
@@ -330,9 +267,6 @@ class DeticNode(Node):
 
     def image_callback(self, msg):
         input_image = self.bridge.imgmsg_to_cv2(msg.rgb,"bgr8")
-        self.depth_image = self.bridge.imgmsg_to_cv2(msg.depth,"passthrough")
-        self.k = msg.depth_camera_info.k
-        
 
         vocabulary = "lvis"
 
@@ -366,12 +300,14 @@ class DeticNode(Node):
         draw_scores = scores
 
         labels = [class_names[i] for i in classes]
+        print(labels)
         areas = np.prod(boxes[:, 2:] - boxes[:, :2], axis=1)
         if areas is not None:
             sorted_idxs = np.argsort(-areas).tolist()
             # Re-order overlapped instances in descending order.
             boxes = boxes[sorted_idxs]
             labels = [labels[k] for k in sorted_idxs]
+            print(labels)
             masks = [masks[idx] for idx in sorted_idxs]
         scores = scores.astype(np.float32)
         detection_results = {
@@ -380,13 +316,27 @@ class DeticNode(Node):
             "classes": draw_classes,
             "masks": draw_mask,
         }
-        visualization, segmentations = self.draw_predictions(
+        visualization, segmentations, text,bounding_box ,object_xy = self.draw_predictions(
             cv2.cvtColor(
                 cv2.resize(input_image, (input_width, input_height)), cv2.COLOR_BGR2RGB
             ),
             detection_results,
             "lvis",
         )
+        if "cup" in labels:
+            idx = labels.index("cup")
+            bounding_box_rgbd = BoundingBoxRgbd()
+            bounding_box_rgbd.x = int((boxes[idx][0]+boxes[idx][2])/2)
+            bounding_box_rgbd.y = int((boxes[idx][1]+boxes[idx][3])/2)
+            print(bounding_box_rgbd.x,bounding_box_rgbd.y)
+            depth = self.bridge.imgmsg_to_cv2(msg.depth, "passthrough")
+            if int((boxes[idx][0]+boxes[idx][2])/2) >= 480:
+                None
+            else:
+                print(depth[int((boxes[idx][0]+boxes[idx][2])/2),int((boxes[idx][1]+boxes[idx][3])/2)])
+                bounding_box_rgbd.z = depth[int((boxes[idx][0]+boxes[idx][2])/2),int((boxes[idx][1]+boxes[idx][3])/2)] / 1000
+                self.segmentation_rgbd_publisher.publish(bounding_box_rgbd)
+        #print(text)
         segmentation_info = SegmentationInfo()
         segmentation_info.header = msg.header
         segmentation_info.segmentations = segmentations

@@ -22,7 +22,10 @@ setup(
     # tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "detic_onnx_ros2_node = detic_onnx_ros2.detic_onnx_ros2:main"
+            "detic_onnx_ros2_node = detic_onnx_ros2.detic_onnx_ros2:main",
+            "detic_onnx_ros2_realsense = detic_onnx_ros2.detic_onnx_ros2_realsense:main",
+            "detic_onnx_clip_ros2_node = detic_onnx_ros2.detic_onnx_clip_ros2:main",
+            "detic_onnx_obj = detic_onnx_ros2.detic_onnx_obj:main",
         ],
     },
 )
