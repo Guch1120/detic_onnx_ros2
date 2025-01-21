@@ -34,7 +34,7 @@ class DeticNode(Node):
     def __init__(self):
         super().__init__("detic_node")
         self.set_ros2param()
-        self.declare_parameter("detection_width", 800)
+        self.declare_parameter("detection_width", 640)
         self.detection_width: int = self.get_parameter("detection_width").value
         self.weight_and_model = self.download_onnx(
             "Detic_C2_SwinB_896_4x_IN-21K+COCO_lvis_op16.onnx"
@@ -48,7 +48,7 @@ class DeticNode(Node):
         else:
             self.session = onnxruntime.InferenceSession(
                 self.weight_and_model,
-                providers=["CPUExecutionProvider"],
+                providers=["CUDAExecutionProvider"],
             )
         self.publisher = self.create_publisher(Image, "detic_result/image", 10)
         self.segmentation_publisher = self.create_publisher(
@@ -99,8 +99,10 @@ class DeticNode(Node):
         self, image: np.ndarray, detection_results: Any, vocabulary: str
     ) -> Tuple[np.ndarray, List[Segmentation]]:
         segmentations: List[Segmentation] = []
-        width = image.shape[1]
-        height = image.shape[0]
+        width = 640
+        height = 480
+        print("draw_predictions width and height")
+        print(width,height)
 
         boxes = detection_results["boxes"].astype(np.int64)
         scores = detection_results["scores"]
@@ -148,6 +150,8 @@ class DeticNode(Node):
                 color=color,
                 thickness=default_font_size // 4,
             )
+            print("bounding box")
+            print(x0, y0, x1, y1)
             segmentation.object_class = object_labels[i]
             segmentation.score = float(scores[i])
             segmentation.bounding_box.xmin = int(min(x0, x1))
@@ -242,7 +246,7 @@ class DeticNode(Node):
         return [x + 0.5 for x in res if len(x) >= 6]
 
     def preprocess(self, image: np.ndarray) -> np.ndarray:
-        height, width, _ = image.shape
+        height, width, _ = 480, 640, 3
         image = image[:, :, ::-1]  # BGR -> RGB
         size = self.detection_width
         max_size = self.detection_width
@@ -277,8 +281,8 @@ class DeticNode(Node):
         )["thing_classes"]
 
         image = self.preprocess(image=input_image)
-        input_height = image.shape[2]
-        input_width = image.shape[3]
+        input_height = 480
+        input_width = 640
         inference_start_time = time.perf_counter()
         boxes, scores, classes, masks = self.session.run(
             None,
@@ -323,18 +327,18 @@ class DeticNode(Node):
             detection_results,
             "lvis",
         )
-        if "cup" in labels:
-            idx = labels.index("cup")
+        if "canister" in labels:
+            idx = labels.index("canister")
             bounding_box_rgbd = BoundingBoxRgbd()
             bounding_box_rgbd.x = int((boxes[idx][0]+boxes[idx][2])/2)
             bounding_box_rgbd.y = int((boxes[idx][1]+boxes[idx][3])/2)
             print(bounding_box_rgbd.x,bounding_box_rgbd.y)
             depth = self.bridge.imgmsg_to_cv2(msg.depth, "passthrough")
-            if int((boxes[idx][0]+boxes[idx][2])/2) >= 480:
+            if int((boxes[idx][1]+boxes[idx][3])/2) >= 480 or int((boxes[idx][0]+boxes[idx][2])/2) >= 640:
                 None
             else:
-                print(depth[int((boxes[idx][0]+boxes[idx][2])/2),int((boxes[idx][1]+boxes[idx][3])/2)])
-                bounding_box_rgbd.z = depth[int((boxes[idx][0]+boxes[idx][2])/2),int((boxes[idx][1]+boxes[idx][3])/2)] / 1000
+                print(depth[int((boxes[idx][1]+boxes[idx][3])/2),int((boxes[idx][0]+boxes[idx][2])/2)])
+                bounding_box_rgbd.z = depth[int((boxes[idx][1]+boxes[idx][3])/2),int((boxes[idx][0]+boxes[idx][3])/2)] / 1000
                 self.segmentation_rgbd_publisher.publish(bounding_box_rgbd)
         #print(text)
         segmentation_info = SegmentationInfo()
