@@ -18,6 +18,7 @@ from detic_onnx_ros2_msg.msg import (
     PointOnImage,
     BoundingBoxRgbd,
 )
+from detic_onnx_ros2_msg.srv import GraspFeedback
 
 from cv_bridge import CvBridge
 from detic_onnx_ros2.imagenet_21k import IN21K_CATEGORIES
@@ -63,8 +64,93 @@ class DeticNode(Node):
             self.image_callback,
             10,
         )
+        self.input_flag = False
         self.bridge = CvBridge()
+        self.srv = self.create_service(GraspFeedback, "detic_result/grasp_feedback", self.grasp_feedback_callback)
+    
+    def grasp_feedback_callback(self, request, response):
+        response = GraspFeedback()
+        if not self.input_flag:
+            response.is_success = False
+            response.x = 0
+            response.y = 0
+            response.z = 0.0
+            return response
+        response.is_success = True
+        
+        vocabulary = "lvis"
 
+        class_names = (
+            self.get_lvis_meta_v1()
+            if vocabulary == "lvis"
+            else self.get_in21k_meta_v1()
+        )["thing_classes"]
+
+        image = self.preprocess(image=self.input_image)
+        input_height = 480
+        input_width = 640
+        inference_start_time = time.perf_counter()
+        boxes, scores, classes, masks = self.session.run(
+            None,
+            {
+                "img": image,
+                "im_hw": np.array([input_height, input_width]).astype(np.int64),
+            },
+        )
+        inference_end_time = time.perf_counter()
+        self.get_logger().info(
+            "Inference takes "
+            + str(inference_end_time - inference_start_time)
+            + " [sec]"
+        )
+        draw_mask = masks
+        masks = masks.astype(np.uint8)
+        draw_classes = classes
+        draw_boxes = boxes
+        draw_scores = scores
+
+        labels = [class_names[i] for i in classes]
+        print(labels)
+        areas = np.prod(boxes[:, 2:] - boxes[:, :2], axis=1)
+        if areas is not None:
+            sorted_idxs = np.argsort(-areas).tolist()
+            # Re-order overlapped instances in descending order.
+            boxes = boxes[sorted_idxs]
+            labels = [labels[k] for k in sorted_idxs]
+            print(labels)
+            masks = [masks[idx] for idx in sorted_idxs]
+        scores = scores.astype(np.float32)
+        detection_results = {
+            "boxes": draw_boxes,
+            "scores": draw_scores,
+            "classes": draw_classes,
+            "masks": draw_mask,
+        }
+        visualization, segmentations, text,bounding_box ,object_xy = self.draw_predictions(
+            cv2.cvtColor(
+                cv2.resize(self.input_image, (input_width, input_height)), cv2.COLOR_BGR2RGB
+            ),
+            detection_results,
+            "lvis",
+        )
+        if "bottle" in request.target_name:
+            idx = labels.index("bottle")
+            #bounding_box_rgbd = GraspFeedback()
+            response.x = int((boxes[idx][0]+boxes[idx][2])/2)
+            response.y = int((boxes[idx][1]+boxes[idx][3])/2)
+            print(response.x,response.y)
+            if int((boxes[idx][1]+boxes[idx][3])/2) >= 480 or int((boxes[idx][0]+boxes[idx][2])/2) >= 640:
+                None
+            else:
+                print(self.depth[int((boxes[idx][1]+boxes[idx][3])/2),int((boxes[idx][0]+boxes[idx][2])/2)])
+                response.z = self.depth[int((boxes[idx][1]+boxes[idx][3])/2),int((boxes[idx][0]+boxes[idx][2])/2)] / 1000
+                #self.segmentation_rgbd_publisher.publish(bounding_box_rgbd)
+
+        #self.publisher.publish(self.bridge.cv2_to_imgmsg(visualization, "bgr8"))
+        return response
+
+
+        
     def download_onnx(
         self,
         model: str,
@@ -268,84 +354,14 @@ class DeticNode(Node):
         image = np.expand_dims(image, axis=0)
         image = image.astype(np.float32)
         return image
+    
+    
 
     def image_callback(self, msg):
-        input_image = self.bridge.imgmsg_to_cv2(msg.rgb,"bgr8")
+        self.input_flag = True
+        self.input_image = self.bridge.imgmsg_to_cv2(msg.rgb,"bgr8")
+        self.depth = self.bridge.imgmsg_to_cv2(msg.depth, "passthrough")
 
-        vocabulary = "lvis"
-
-        class_names = (
-            self.get_lvis_meta_v1()
-            if vocabulary == "lvis"
-            else self.get_in21k_meta_v1()
-        )["thing_classes"]
-
-        image = self.preprocess(image=input_image)
-        input_height = 480
-        input_width = 640
-        inference_start_time = time.perf_counter()
-        boxes, scores, classes, masks = self.session.run(
-            None,
-            {
-                "img": image,
-                "im_hw": np.array([input_height, input_width]).astype(np.int64),
-            },
-        )
-        inference_end_time = time.perf_counter()
-        self.get_logger().info(
-            "Inference takes "
-            + str(inference_end_time - inference_start_time)
-            + " [sec]"
-        )
-        draw_mask = masks
-        masks = masks.astype(np.uint8)
-        draw_classes = classes
-        draw_boxes = boxes
-        draw_scores = scores
-
-        labels = [class_names[i] for i in classes]
-        print(labels)
-        areas = np.prod(boxes[:, 2:] - boxes[:, :2], axis=1)
-        if areas is not None:
-            sorted_idxs = np.argsort(-areas).tolist()
-            # Re-order overlapped instances in descending order.
-            boxes = boxes[sorted_idxs]
-            labels = [labels[k] for k in sorted_idxs]
-            print(labels)
-            masks = [masks[idx] for idx in sorted_idxs]
-        scores = scores.astype(np.float32)
-        detection_results = {
-            "boxes": draw_boxes,
-            "scores": draw_scores,
-            "classes": draw_classes,
-            "masks": draw_mask,
-        }
-        visualization, segmentations, text,bounding_box ,object_xy = self.draw_predictions(
-            cv2.cvtColor(
-                cv2.resize(input_image, (input_width, input_height)), cv2.COLOR_BGR2RGB
-            ),
-            detection_results,
-            "lvis",
-        )
-        if "mug" in labels:
-            idx = labels.index("mug")
-            bounding_box_rgbd = BoundingBoxRgbd()
-            bounding_box_rgbd.x = int((boxes[idx][0]+boxes[idx][2])/2)
-            bounding_box_rgbd.y = int((boxes[idx][1]+boxes[idx][3])/2)
-            print(bounding_box_rgbd.x,bounding_box_rgbd.y)
-            depth = self.bridge.imgmsg_to_cv2(msg.depth, "passthrough")
-            if int((boxes[idx][1]+boxes[idx][3])/2) >= 480 or int((boxes[idx][0]+boxes[idx][2])/2) >= 640:
-                None
-            else:
-                print(depth[int((boxes[idx][1]+boxes[idx][3])/2),int((boxes[idx][0]+boxes[idx][2])/2)])
-                bounding_box_rgbd.z = depth[int((boxes[idx][1]+boxes[idx][3])/2),int((boxes[idx][0]+boxes[idx][3])/2)] / 1000
-                self.segmentation_rgbd_publisher.publish(bounding_box_rgbd)
-
-        segmentation_info = SegmentationInfo()
-        segmentation_info.header = msg.header
-        segmentation_info.segmentations = segmentations
-        self.segmentation_publisher.publish(segmentation_info)
-        self.publisher.publish(self.bridge.cv2_to_imgmsg(visualization, "bgr8"))
 
     def set_ros2param(self):
         self.declare_parameter('device',"gpu")

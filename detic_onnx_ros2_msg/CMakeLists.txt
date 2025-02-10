@@ -10,14 +10,27 @@ find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 
-rosidl_generate_interfaces(${PROJECT_NAME}
+find_package(rosidl_default_generators REQUIRED)
+
+set(grasp_feedback
+  "srv/GraspFeedback.srv"
+)
+
+set(msg_files
   "msg/PointOnImage.msg"
   "msg/Polygon.msg"
   "msg/Segmentation.msg"
   "msg/SegmentationInfo.msg"
   "msg/BoundingBox.msg"
   "msg/BoundingBoxRgbd.msg"
+)
+
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  ${msg_files}
+  ${grasp_feedback}
   DEPENDENCIES std_msgs sensor_msgs
 )
 
