@@ -59,7 +59,7 @@ class DeticNode(Node):
         )
         self.subscription = self.create_subscription(
             RGBD,
-            "/camera/rgbd",
+            "/d455/camera/rgbd",
             self.image_callback,
             10,
         )

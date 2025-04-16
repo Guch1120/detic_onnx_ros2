@@ -18,7 +18,7 @@ from detic_onnx_ros2_msg.msg import (
     PointOnImage,
     BoundingBoxRgbd,
 )
-from detic_onnx_ros2_msg.srv import GraspFeedback
+from detic_onnx_ros2_msg.srv import GraspFeedback,ObjectDetection
 
 from cv_bridge import CvBridge
 from detic_onnx_ros2.imagenet_21k import IN21K_CATEGORIES
@@ -60,23 +60,23 @@ class DeticNode(Node):
         )
         self.subscription = self.create_subscription(
             RGBD,
-            "/camera/rgbd",
+            "/d455/camera/rgbd",
             self.image_callback,
             10,
         )
         self.input_flag = False
         self.bridge = CvBridge()
-        self.srv = self.create_service(GraspFeedback, "detic_result/grasp_feedback", self.grasp_feedback_callback)
+        self.srv = self.create_service(ObjectDetection, "detic_result/object_feedback", self.grasp_feedback_callback)
     
     def grasp_feedback_callback(self, request, response):
-        response = GraspFeedback()
+        response = ObjectDetection.Response()
         if not self.input_flag:
             response.is_success = False
-            response.x = 0
-            response.y = 0
-            response.z = 0.0
+            response.maskedRGBImage = None
+            response.maskedDepthImage = None
             return response
-        response.is_success = True
+
+        self.target_name = request.target_name
         
         vocabulary = "lvis"
 
@@ -133,20 +133,27 @@ class DeticNode(Node):
             detection_results,
             "lvis",
         )
-        if "bottle" in request.target_name:
-            idx = labels.index("bottle")
+        if request.target_name in labels:
+            idx = labels.index(str(request.target_name))
             #bounding_box_rgbd = GraspFeedback()
-            response.x = int((boxes[idx][0]+boxes[idx][2])/2)
-            response.y = int((boxes[idx][1]+boxes[idx][3])/2)
-            print(response.x,response.y)
+            x = int((boxes[idx][0]+boxes[idx][2])/2)
+            y = int((boxes[idx][1]+boxes[idx][3])/2)
             if int((boxes[idx][1]+boxes[idx][3])/2) >= 480 or int((boxes[idx][0]+boxes[idx][2])/2) >= 640:
                 None
             else:
                 print(self.depth[int((boxes[idx][1]+boxes[idx][3])/2),int((boxes[idx][0]+boxes[idx][2])/2)])
-                response.z = self.depth[int((boxes[idx][1]+boxes[idx][3])/2),int((boxes[idx][0]+boxes[idx][2])/2)] / 1000
+                z = self.depth[int((boxes[idx][1]+boxes[idx][3])/2),int((boxes[idx][0]+boxes[idx][2])/2)] / 1000
                 #self.segmentation_rgbd_publisher.publish(bounding_box_rgbd)
+                response.is_success = True
+                response.masked_rgb_image = self.bridge.cv2_to_imgmsg(visualization, "bgr8")
+                response.masked_depth_image = self.bridge.cv2_to_imgmsg(self.depth, "passthrough")
 
-        #self.publisher.publish(self.bridge.cv2_to_imgmsg(visualization, "bgr8"))
+            #self.publisher.publish(self.bridge.cv2_to_imgmsg(visualization, "bgr8"))
+        else:
+            response.is_success = False
+            response.masked_rgb_image = Image()
+            response.masked_depth_image = Image()
+
         return response
 
 

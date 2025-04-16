@@ -1,0 +1,5 @@
+string target_name
+---
+bool is_success
+sensor_msgs/Image masked_rgb_image
+sensor_msgs/Image masked_depth_image

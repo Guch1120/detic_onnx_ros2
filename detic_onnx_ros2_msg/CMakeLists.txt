@@ -16,6 +16,7 @@ find_package(rosidl_default_generators REQUIRED)
 
 set(grasp_feedback
   "srv/GraspFeedback.srv"
+  "srv/ObjectDetection.srv"
 )
 
 set(msg_files
