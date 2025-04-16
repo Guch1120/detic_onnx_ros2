@@ -72,8 +72,8 @@ class DeticNode(Node):
         response = ObjectDetection.Response()
         if not self.input_flag:
             response.is_success = False
-            response.masked_rgb_image = None
-            response.masked_depgh_image = None
+            response.maskedRGBImage = None
+            response.maskedDepthImage = None
             return response
 
         self.target_name = request.target_name
@@ -87,8 +87,6 @@ class DeticNode(Node):
         )["thing_classes"]
 
         image = self.preprocess(image=self.input_image)
-        input_img = self.input_image
-        input_depth = self.depth
         input_height = 480
         input_width = 640
         inference_start_time = time.perf_counter()
@@ -147,13 +145,8 @@ class DeticNode(Node):
                 z = self.depth[int((boxes[idx][1]+boxes[idx][3])/2),int((boxes[idx][0]+boxes[idx][2])/2)] / 1000
                 #self.segmentation_rgbd_publisher.publish(bounding_box_rgbd)
                 response.is_success = True
-                y0,y1,x0,x1 = int(boxes[idx][1]),int(boxes[idx][3]),int(boxes[idx][0]),int(boxes[idx][2])
-                response.masked_rgb_image = self.bridge.cv2_to_imgmsg(input_img[y0 : y1, x0 : x1],encoding='bgr8')
-                response.masked_depth_image = self.bridge.cv2_to_imgmsg(input_depth[y0:y1, x0:x1], encoding='16UC1')
-                #cv2.imshow("detic", input_img[y0 : y1, x0 : x1])
-                #cv2.waitKey(10000)
-                #cv2.destroyAllWindows()
-
+                response.masked_rgb_image = self.bridge.cv2_to_imgmsg(visualization, "bgr8")
+                response.masked_depth_image = self.bridge.cv2_to_imgmsg(self.depth, "passthrough")
 
             #self.publisher.publish(self.bridge.cv2_to_imgmsg(visualization, "bgr8"))
         else:
