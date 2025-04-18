@@ -14,6 +14,11 @@ import time
 import sklearn 
 from sklearn.decomposition import PCA
 from sklearn.cluster import DBSCAN
+from geometry_msgs.msg import TransformStamped
+from tf2_ros import TransformBroadcaster
+import tf2_ros
+import transforms3d
+import tf_transformations
 
 class MinimalClientAsync(Node):
 
@@ -29,9 +34,11 @@ class MinimalClientAsync(Node):
         # リクエスト定義
         self.req = ObjectDetection.Request()
         self.bridge = CvBridge()
+        self.broadcaster = TransformBroadcaster(self)
+        self.TFpublisher = self.create_publisher(TransformStamped, 'bag_pose', 10)
 
     def send_request(self):
-        self.req.target_name = "bowl"
+        self.req.target_name = "box"
         self.future = self.cli.call_async(self.req)
         rclpy.spin_until_future_complete(self, self.future,timeout_sec=100.0)
         if self.future.done():
@@ -62,8 +69,30 @@ class MinimalClientAsync(Node):
                     vec = pca.components_[0]
                     z_mean = np.mean(xyz[:, 2])
                     z_max = np.max(xyz[:, 2])
+                    print(center, vec, z_mean, z_max)
+
+
+                    # tf publish
+                    t = TransformStamped()
+                    t.header.stamp = self.get_clock().now().to_msg()
+                    t.header.frame_id = "bag_frame"
+                    t.child_frame_id = "pan_link"
+                    t.transform.translation.x = center[0]
+                    t.transform.translation.y = center[1]
+                    t.transform.translation.z = z_mean
+                    q = tf_transformations.quaternion_from_euler(0, 0, np.arctan2(vec[1], vec[0]))
+                    t.transform.rotation.x = q[0]
+                    t.transform.rotation.y = q[1]
+                    t.transform.rotation.z = q[2]
+                    t.transform.rotation.w = q[3]
+                    self.TFpublisher.publish(t)
+                    self.broadcaster.sendTransform(t) 
+                    print(center[0], center[1], z_mean)
+
+
 
                     return True, xyz, center, vec, z_mean, z_max
+                
 
                 else:
                     self.get_logger().info('Request failed')
@@ -85,8 +114,7 @@ def main(args=None):
     minimal_client = MinimalClientAsync()
     minimal_client.send_request()
 
-    while rclpy.ok():
-        rclpy.spin_once(minimal_client)
+    rclpy.spin_once(minimal_client)
 
     minimal_client.destroy_node()
     rclpy.shutdown()

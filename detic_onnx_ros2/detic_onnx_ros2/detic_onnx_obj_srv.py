@@ -89,8 +89,8 @@ class DeticNode(Node):
         image = self.preprocess(image=self.input_image)
         input_img = self.input_image
         input_depth = self.depth
-        input_height = 480
-        input_width = 640
+        input_height = 720
+        input_width = 1280
         inference_start_time = time.perf_counter()
         boxes, scores, classes, masks = self.session.run(
             None,
@@ -140,7 +140,7 @@ class DeticNode(Node):
             #bounding_box_rgbd = GraspFeedback()
             x = int((boxes[idx][0]+boxes[idx][2])/2)
             y = int((boxes[idx][1]+boxes[idx][3])/2)
-            if int((boxes[idx][1]+boxes[idx][3])/2) >= 480 or int((boxes[idx][0]+boxes[idx][2])/2) >= 640:
+            if int((boxes[idx][1]+boxes[idx][3])/2) >= 720 or int((boxes[idx][0]+boxes[idx][2])/2) >= 1280:
                 None
             else:
                 print(self.depth[int((boxes[idx][1]+boxes[idx][3])/2),int((boxes[idx][0]+boxes[idx][2])/2)])
@@ -148,8 +148,11 @@ class DeticNode(Node):
                 #self.segmentation_rgbd_publisher.publish(bounding_box_rgbd)
                 response.is_success = True
                 y0,y1,x0,x1 = int(boxes[idx][1]),int(boxes[idx][3]),int(boxes[idx][0]),int(boxes[idx][2])
-                response.masked_rgb_image = self.bridge.cv2_to_imgmsg(input_img[y0 : y1, x0 : x1],encoding='bgr8')
-                response.masked_depth_image = self.bridge.cv2_to_imgmsg(input_depth[y0:y1, x0:x1], encoding='16UC1')
+                #response.masked_rgb_image = self.bridge.cv2_to_imgmsg(input_img[y0 : y1, x0 : x1],encoding='bgr8')
+                masked_image = cv2.bitwise_and(input_img, input_img,mask=masks[idx])
+                response.masked_rgb_image = self.bridge.cv2_to_imgmsg(masked_image[y0:y1,x0:x1],encoding='bgr8')
+                masked_depth = cv2.bitwise_and(input_depth, input_depth,mask=masks[idx])
+                response.masked_depth_image = self.bridge.cv2_to_imgmsg(masked_depth[y0:y1, x0:x1], encoding='16UC1')
                 #cv2.imshow("detic", input_img[y0 : y1, x0 : x1])
                 #cv2.waitKey(10000)
                 #cv2.destroyAllWindows()
@@ -199,8 +202,8 @@ class DeticNode(Node):
         self, image: np.ndarray, detection_results: Any, vocabulary: str
     ) -> Tuple[np.ndarray, List[Segmentation]]:
         segmentations: List[Segmentation] = []
-        width = 640
-        height = 480
+        width = 1280
+        height = 720
 
         text = None
         bounding_box = None
@@ -346,7 +349,7 @@ class DeticNode(Node):
         return [x + 0.5 for x in res if len(x) >= 6]
 
     def preprocess(self, image: np.ndarray) -> np.ndarray:
-        height, width, _ = 480, 640, 3
+        height, width, _ = 720, 1280, 3
         image = image[:, :, ::-1]  # BGR -> RGB
         size = self.detection_width
         max_size = self.detection_width
