@@ -1,7 +1,7 @@
 # sys.argvを使用して，リクエストのコマンドライン入力引数にアクセスするためにインポート
 import sys
 
-from detic_onnx_ros2_msg.srv import GraspFeedback,ObjectDetection
+from detic_onnx_ros2_msg.srv import GraspFeedback,ObjectDetection,GraspBag
 import rclpy
 from rclpy.node import Node
 import cv2
@@ -25,15 +25,13 @@ class MinimalClientAsync(Node):
 
     def __init__(self):
         super().__init__('minimal_client_async')
-        # コンストラクター定義は，service nodeと同じタイプと名前のclient nodeを作成する．
-        # タイプと名前は，clientとserviceが通信できるように一致する必要がある．
         #self.cli = self.create_client(GraspFeedback, 'detic_result/grasp_feedback')
-        self.cli = self.create_client(ObjectDetection, 'detic_result/object_feedback')
+        self.cli = self.create_client(GraspBag, 'detic_result/object_feedback')
         # clientのタイプと名前に一致するserviceが利用可能かどうか，1秒に1回チェック．
         while not self.cli.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('service not available, waiting again...')
         # リクエスト定義
-        self.req = ObjectDetection.Request()
+        self.req = GraspBag.Request()
         self.bridge = CvBridge()
         self.broadcaster = TransformBroadcaster(self)
         self.TFpublisher = self.create_publisher(TransformStamped, 'bag_pose', 10)
@@ -74,6 +72,7 @@ class MinimalClientAsync(Node):
 
 
                     #主成分分析
+                    #座標が逆だったりするので注意
                     pca = PCA()
                     pca.fit(xyz[:, :2])
                     center = pca.mean_
