@@ -10,6 +10,7 @@ import cv2
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy 
 
 from detic_onnx_ros2_msg.msg import (
     SegmentationInfo,
@@ -65,11 +66,16 @@ class DeticNode(Node):
         self.segmentation_publisher = self.create_publisher(
             SegmentationInfo, self.get_name() + "/detic_result/segmentation_info", 10
         )
+        sensor_qos_profile = QoSProfile(
+                    reliability=QoSReliabilityPolicy.BEST_EFFORT,
+                    history=QoSHistoryPolicy.KEEP_LAST,
+                    depth=5  # 10から5に変えてもいいかも
+        )
         self.subscription = self.create_subscription(
             RGBD,
-            "/camera/rgbd",
+            "/camera/camera/rgbd",
             self.image_callback,
-            10,
+            sensor_qos_profile, # ★「10」だったところを、作ったQoS設定に変える
         )
         self.bridge = CvBridge()
 
