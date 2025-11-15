@@ -122,8 +122,12 @@ class DeticNode(Node):
         return meta
 
     def draw_predictions(
-        self, image: np.ndarray, detection_results: Any, vocabulary: str
-    ) -> Tuple[np.ndarray, List[Segmentation]]:
+        self, image: np.ndarray, 
+        detection_results: Any, 
+        vocabulary: str,
+        camera_frame_id: str,
+        timestamp: Any
+        ) -> Tuple[np.ndarray, List[Segmentation]]:
         segmentations: List[Segmentation] = []
         width = image.shape[1]
         height = image.shape[0]
@@ -166,7 +170,7 @@ class DeticNode(Node):
             image_b = image.copy()
             image_f = image.copy()
 
-            # draw box
+            # バウンディングボックスの作成
             x0, y0, x1, y1 = boxes[i]
             cv2.rectangle(
                 image_b,
@@ -182,7 +186,7 @@ class DeticNode(Node):
             segmentation.bounding_box.ymin = int(min(y0, y1))
             segmentation.bounding_box.ymax = int(max(y0, y1))
 
-            # draw segment
+            # バウンディングボックス対象物の色塗り
             polygons = self.mask_to_polygons(masks[i])
             for points in polygons:
                 polygon = Polygon()
@@ -218,7 +222,7 @@ class DeticNode(Node):
                 else:
                     text_pos = (x0, y1)
 
-            # draw label
+            # 検出ラベル作成
             x, y = text_pos
             text = labels[i]
             font = cv2.FONT_HERSHEY_SIMPLEX
@@ -270,12 +274,14 @@ class DeticNode(Node):
             distance = self.depth_image[int(cy)][int(cx)]
             nearest_object_y,nearest_object_z,nearest_object_x = rs.rs2_deproject_pixel_to_point(self.depth_intrinsics, [cx, cy], distance)
             """
-            now = self.get_clock().now().to_msg()
+        #tf作成ゾーン
+            # now = self.get_clock().now().to_msg()
             Trans = TransformStamped()
-            Trans.header.stamp = now
-            Trans.header.frame_id = "odom"
-            Trans.child_frame_id = text 
-            
+            # Trans.header.stamp = now
+            Trans.header.stamp = timestamp
+            Trans.header.frame_id = "camera_frame_id"
+            Trans.child_frame_id = object_labels[i] + "_" + str(i)            
+
             Trans.transform.translation.x = float(nearest_object_z)
             Trans.transform.translation.y = float(-nearest_object_x)
             Trans.transform.translation.z = float(-nearest_object_y)
@@ -339,9 +345,11 @@ class DeticNode(Node):
         self.depth_image = self.bridge.imgmsg_to_cv2(msg.depth,"passthrough")
         self.k = msg.depth_camera_info.k
         
-
+        # ★ どのフレームを基準にするか、メッセージのヘッダーから取得する
+        camera_frame_id = msg.depth_camera_info.header.frame_id
+        timestamp = msg.depth_camera_info.header.stamp
+        
         vocabulary = "lvis"
-
         class_names = (
             self.get_lvis_meta_v1()
             if vocabulary == "lvis"
@@ -392,6 +400,8 @@ class DeticNode(Node):
             ),
             detection_results,
             "lvis",
+            camera_frame_id,
+            timestamp
         )
         segmentation_info = SegmentationInfo()
         segmentation_info.header = msg.header
